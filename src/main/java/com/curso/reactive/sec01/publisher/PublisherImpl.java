@@ -1,7 +1,7 @@
 package com.curso.reactive.sec01.publisher;
 
-import java.util.concurrent.Flow.Publisher;
-import java.util.concurrent.Flow.Subscriber;
+import org.reactivestreams.Publisher;
+import org.reactivestreams.Subscriber;
 
 public class PublisherImpl implements Publisher<String> {
 

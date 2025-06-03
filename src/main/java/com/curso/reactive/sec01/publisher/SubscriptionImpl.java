@@ -1,7 +1,8 @@
 package com.curso.reactive.sec01.publisher;
 
-import java.util.concurrent.Flow.Subscriber;
-import java.util.concurrent.Flow.Subscription;
+
+import org.reactivestreams.Subscriber;
+import org.reactivestreams.Subscription;
 
 import com.github.javafaker.Faker;
 
@@ -33,11 +34,12 @@ public class SubscriptionImpl implements Subscription {
 		if (requested > MAX_ITEMS) {
 			this.subscriber.onError(new RuntimeException("Validation error: Requested items exceed maximum limit of " + MAX_ITEMS));
 			this.isCancelled = true;
+			return;
 		}
 		
 		for (int i = 0; i < requested && count < MAX_ITEMS; i++) {
             count++;
-            this.subscriber.onNext(this.faker.beer().name());
+            this.subscriber.onNext(this.faker.chuckNorris().fact());
             
         }
 		

@@ -1,7 +1,9 @@
 package com.curso.reactive.sec01.subscriber;
 
-import java.util.concurrent.Flow.Subscriber;
-import java.util.concurrent.Flow.Subscription;
+
+
+import org.reactivestreams.Subscriber;
+import org.reactivestreams.Subscription;
 
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
