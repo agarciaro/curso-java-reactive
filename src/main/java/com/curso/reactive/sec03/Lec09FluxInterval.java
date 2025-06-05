@@ -1,8 +1,8 @@
 package com.curso.reactive.sec03;
 
+import com.curso.reactive.common.ExternalServiceClient;
 import com.curso.reactive.common.Util;
 import com.curso.reactive.sec01.subscriber.SubscriberImpl;
-import com.curso.reactive.sec02.ExternalServiceClient;
 import com.curso.reactive.sec03.helper.NameGenerator;
 
 import lombok.extern.slf4j.Slf4j;

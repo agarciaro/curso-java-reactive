@@ -1,6 +1,4 @@
-package com.curso.reactive.sec02;
-
-import com.curso.reactive.common.AbstractHttpClient;
+package com.curso.reactive.common;
 
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;

@@ -1,5 +1,6 @@
 package com.curso.reactive.sec02;
 
+import com.curso.reactive.common.ExternalServiceClient;
 import com.curso.reactive.common.Util;
 
 import lombok.extern.slf4j.Slf4j;
