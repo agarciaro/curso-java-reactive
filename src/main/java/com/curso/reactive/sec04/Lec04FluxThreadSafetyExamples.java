@@ -16,18 +16,20 @@ import reactor.core.publisher.Sinks;
 public class Lec04FluxThreadSafetyExamples {
 
     public static void main(String[] args) {
-        log.info("=== Ejemplo 1: Un productor, múltiples suscriptores ===");
-        demo1UnProductorMultiplesSuscriptores();
+//        log.info("=== Ejemplo 1: Un productor, múltiples suscriptores ===");
+//        demo1UnProductorMultiplesSuscriptores();
+//        
+//        Util.sleepSeconds(5);
         
-        Util.sleepSeconds(2);
+//        log.info("\n=== Ejemplo 2: Múltiples productores, un suscriptor ===");
+//        demo2MultipleProductoresUnSuscriptor();
+//        
+//        Util.sleepSeconds(5);
         
-        //log.info("\n=== Ejemplo 2: Múltiples productores, un suscriptor ===");
-        //demo2MultipleProductoresUnSuscriptor();
+        log.info("\n=== Ejemplo 3: Múltiples productores, múltiples suscriptores ===");
+        demo3MultipleProductoresMultiplesSuscriptores();
         
-        //Util.sleepSeconds(2);
-        
-        //log.info("\n=== Ejemplo 3: Múltiples productores, múltiples suscriptores ===");
-        //demo3MultipleProductoresMultiplesSuscriptores();
+        Util.sleepSeconds(5);
     }
 
     /**
@@ -116,19 +118,36 @@ public class Lec04FluxThreadSafetyExamples {
      * Total de 5000 elementos (1000 por cada productor)
      */
     private static void demo2MultipleProductoresUnSuscriptor() {
-        // Sink thread-safe para múltiples productores
-        Sinks.Many<String> sink = Sinks.many().multicast().onBackpressureBuffer();
-        Flux<String> flux = sink.asFlux();
-        
         // Lista thread-safe para el único suscriptor
         List<String> listaSuscriptor = Collections.synchronizedList(new java.util.ArrayList<>());
         
-        AtomicInteger productoresCompletados = new AtomicInteger(0);
         int totalProductores = 5;
         CountDownLatch latch = new CountDownLatch(1);
         
+        // Crear múltiples Flux, uno por cada productor
+        Flux<String>[] fluxes = new Flux[totalProductores];
+        
+        for (int producerIndex = 1; producerIndex <= totalProductores; producerIndex++) {
+            final int producerId = producerIndex;
+            
+            // Cada productor tiene su propio Flux
+            fluxes[producerIndex - 1] = Flux.create(sink -> {
+                new Thread(() -> {
+                    log.info("Productor {} iniciado", producerId);
+                    for (int i = 1; i <= 1000; i++) {
+                        sink.next("Prod" + producerId + "-Item" + i);
+                    }
+                    log.info("Productor {} completado", producerId);
+                    sink.complete();
+                }).start();
+            });
+        }
+        
+        // Merge todos los Flux en uno solo
+        Flux<String> fluxCombinado = Flux.merge(fluxes);
+        
         // Un solo suscriptor
-        flux.subscribe(
+        fluxCombinado.subscribe(
             item -> {
                 listaSuscriptor.add(item);
                 if (listaSuscriptor.size() % 500 == 0) {
@@ -142,26 +161,6 @@ public class Lec04FluxThreadSafetyExamples {
             }
         );
         
-        // Crear múltiples productores
-        for (int producerIndex = 1; producerIndex <= totalProductores; producerIndex++) {
-            final int producerId = producerIndex;
-            Thread productor = new Thread(() -> {
-                log.info("Productor {} iniciado", producerId);
-                for (int i = 1; i <= 1000; i++) {
-                    sink.tryEmitNext("Prod" + producerId + "-Item" + i);
-                }
-                
-                int completados = productoresCompletados.incrementAndGet();
-                log.info("Productor {} completado. Total completados: {}", producerId, completados);
-                
-                if (completados == totalProductores) {
-                    sink.tryEmitComplete();
-                    log.info("Todos los productores completados, sink cerrado");
-                }
-            });
-            productor.start();
-        }
-        
         try {
             latch.await();
             log.info("=== RESULTADO EJEMPLO 2 ===");
@@ -173,113 +172,106 @@ public class Lec04FluxThreadSafetyExamples {
 
     /**
      * Ejemplo 3: Múltiples productores (3 threads) y múltiples suscriptores (4 threads)
-     * Total de 3000 elementos emitidos, distribuidos entre 4 suscriptores
+     * 3000 elementos total distribuidos entre 4 suscriptores (cada elemento procesado una vez)
      */
     private static void demo3MultipleProductoresMultiplesSuscriptores() {
-        // Sink thread-safe
-        Sinks.Many<String> sink = Sinks.many().multicast().onBackpressureBuffer();
-        Flux<String> flux = sink.asFlux();
-        
         // Listas thread-safe para cada suscriptor
         List<String> listaSubs1 = new CopyOnWriteArrayList<>();
         List<String> listaSubs2 = new CopyOnWriteArrayList<>();
         List<String> listaSubs3 = new CopyOnWriteArrayList<>();
         List<String> listaSubs4 = new CopyOnWriteArrayList<>();
         
-        AtomicInteger productoresCompletados = new AtomicInteger(0);
         int totalProductores = 3;
-        CountDownLatch latch = new CountDownLatch(4); // 4 suscriptores
+        int totalSuscriptores = 4;
+        CountDownLatch latch = new CountDownLatch(totalSuscriptores);
         
-        // Suscriptor 1
-        flux.subscribe(
-            item -> {
-                listaSubs1.add("S1-" + item);
-                if (listaSubs1.size() % 200 == 0) {
-                    log.info("Suscriptor 1: {} elementos", listaSubs1.size());
+        // Un solo sink que recibe todos los elementos
+        Sinks.Many<String> mainSink = Sinks.many().multicast().onBackpressureBuffer();
+        
+        // Cola thread-safe para distribución
+        java.util.concurrent.BlockingQueue<String> distributionQueue = new java.util.concurrent.LinkedBlockingQueue<>();
+        
+        AtomicInteger completedProducers = new AtomicInteger(0);
+        AtomicInteger totalEmitted = new AtomicInteger(0);
+        AtomicInteger distributedCounter = new AtomicInteger(0);
+        
+        // Crear threads de suscriptores que toman elementos de la cola
+        List<String>[] listas = new List[]{listaSubs1, listaSubs2, listaSubs3, listaSubs4};
+        
+        for (int i = 0; i < totalSuscriptores; i++) {
+            final int suscriptorId = i + 1;
+            final List<String> lista = listas[i];
+            
+            Thread suscriptor = new Thread(() -> {
+                try {
+                    while (true) {
+                        String elemento = distributionQueue.take(); // Bloquea hasta obtener elemento
+                        if ("STOP".equals(elemento)) {
+                            break; // Señal de parada
+                        }
+                        lista.add("S" + suscriptorId + "-" + elemento);
+                        if (lista.size() % 100 == 0) {
+                            log.info("Suscriptor {}: {} elementos procesados", suscriptorId, lista.size());
+                        }
+                    }
+                    log.info("Suscriptor {} completado. Total procesado: {}", suscriptorId, lista.size());
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    log.info("Suscriptor {} interrumpido. Total procesado: {}", suscriptorId, lista.size());
+                } finally {
+                    latch.countDown();
                 }
-            },
-            error -> log.error("Error en suscriptor 1: {}", error.getMessage()),
-            () -> {
-                log.info("Suscriptor 1 completado. Total: {}", listaSubs1.size());
-                latch.countDown();
-            }
-        );
+            });
+            suscriptor.start();
+        }
         
-        // Suscriptor 2
-        flux.subscribe(
-            item -> {
-                listaSubs2.add("S2-" + item);
-                if (listaSubs2.size() % 200 == 0) {
-                    log.info("Suscriptor 2: {} elementos", listaSubs2.size());
-                }
-            },
-            error -> log.error("Error en suscriptor 2: {}", error.getMessage()),
-            () -> {
-                log.info("Suscriptor 2 completado. Total: {}", listaSubs2.size());
-                latch.countDown();
-            }
-        );
-        
-        // Suscriptor 3
-        flux.subscribe(
-            item -> {
-                listaSubs3.add("S3-" + item);
-                if (listaSubs3.size() % 200 == 0) {
-                    log.info("Suscriptor 3: {} elementos", listaSubs3.size());
-                }
-            },
-            error -> log.error("Error en suscriptor 3: {}", error.getMessage()),
-            () -> {
-                log.info("Suscriptor 3 completado. Total: {}", listaSubs3.size());
-                latch.countDown();
-            }
-        );
-        
-        // Suscriptor 4
-        flux.subscribe(
-            item -> {
-                listaSubs4.add("S4-" + item);
-                if (listaSubs4.size() % 200 == 0) {
-                    log.info("Suscriptor 4: {} elementos", listaSubs4.size());
-                }
-            },
-            error -> log.error("Error en suscriptor 4: {}", error.getMessage()),
-            () -> {
-                log.info("Suscriptor 4 completado. Total: {}", listaSubs4.size());
-                latch.countDown();
-            }
-        );
-        
-        // Crear múltiples productores
+        // Crear productores que envían elementos a la cola thread-safe
         for (int producerIndex = 1; producerIndex <= totalProductores; producerIndex++) {
             final int producerId = producerIndex;
+            
             Thread productor = new Thread(() -> {
                 log.info("Productor {} iniciado", producerId);
                 for (int i = 1; i <= 1000; i++) {
-                    sink.tryEmitNext("P" + producerId + "-Item" + i);
+                    String elemento = "P" + producerId + "-Item" + i;
+                    try {
+                        distributionQueue.put(elemento); // put() es thread-safe y blocking
+                        totalEmitted.incrementAndGet();
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
                 }
                 
-                int completados = productoresCompletados.incrementAndGet();
-                log.info("Productor {} completado. Total completados: {}", producerId, completados);
+                int completed = completedProducers.incrementAndGet();
+                log.info("Productor {} completado. Elementos emitidos hasta ahora: {}", producerId, totalEmitted.get());
                 
-                if (completados == totalProductores) {
-                    sink.tryEmitComplete();
-                    log.info("Todos los productores completados, sink cerrado");
+                // Cuando todos los productores terminen, enviar señales de parada
+                if (completed == totalProductores) {
+                    try {
+                        // Enviar señal de parada a todos los suscriptores
+                        for (int i = 0; i < totalSuscriptores; i++) {
+                            distributionQueue.put("STOP");
+                        }
+                        log.info("Todos los productores completados. Total elementos emitidos: {}", totalEmitted.get());
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
                 }
             });
             productor.start();
         }
+
         
         try {
             latch.await();
-            log.info("=== RESULTADO EJEMPLO 3 ===");
-            log.info("Suscriptor 1 tamaño: {}", listaSubs1.size());
-            log.info("Suscriptor 2 tamaño: {}", listaSubs2.size());
-            log.info("Suscriptor 3 tamaño: {}", listaSubs3.size());
-            log.info("Suscriptor 4 tamaño: {}", listaSubs4.size());
-            int totalRecibido = listaSubs1.size() + listaSubs2.size() + 
+            log.info("=== RESULTADO EJEMPLO 3 - DISTRIBUCIÓN DE TRABAJO ===");
+            log.info("Suscriptor 1 procesó: {} elementos", listaSubs1.size());
+            log.info("Suscriptor 2 procesó: {} elementos", listaSubs2.size());
+            log.info("Suscriptor 3 procesó: {} elementos", listaSubs3.size());
+            log.info("Suscriptor 4 procesó: {} elementos", listaSubs4.size());
+            int totalProcesado = listaSubs1.size() + listaSubs2.size() + 
                               listaSubs3.size() + listaSubs4.size();
-            log.info("Total elementos recibidos por todos los suscriptores: {}", totalRecibido);
+            log.info("Total elementos procesados (debe ser 3000): {}", totalProcesado);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
