@@ -11,9 +11,10 @@ public class Lec02FluxCreateRefactor {
 		
 		var generator = new NameGenerator();
         var flux = Flux.create(generator);
-        flux.subscribe(Util.createSubscriber());
+        flux.subscribe(Util.createSubscriber("sub1"));
+//        flux.subscribe(Util.createSubscriber("sub2"));
 
-        for (int i = 0; i < 10; i++) {
+        for (int i = 0; i < 2; i++) {
             generator.generate();
         }
 

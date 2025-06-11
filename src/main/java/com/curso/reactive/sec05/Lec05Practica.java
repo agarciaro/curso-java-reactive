@@ -31,7 +31,7 @@ class InsufficientFundsException extends RuntimeException {
 class TransactionProcessor {
 	// Simula el procesamiento de una transacción con posible fallo de conexión
 	public static Double processTransaction(Double amount) {
-		if (Math.random() > 0.7) { // 30% de chance de fallo de conexión
+		if (Math.random() > 0.4) { // 40% de chance de fallo de conexión
 			throw new RuntimeException("Conexión intermitente fallida");
 		}
 		return amount * 0.95; // Aplica 5% de comisión
@@ -97,100 +97,6 @@ public class Lec05Practica {
 			
 			// Bloquear para ver resultados
 			.blockLast();
-		
-		log.info("\n=== Ejemplo adicional con manejo más granular ===");
-		procesarTransaccionesConManejoGranular();
 	}
-
-	// Calcular comisión (puede fallar por conexión)
-	// Método para crear el flujo de transacciones
-    private static Flux<Double> createTransactionFlux() {
-        return Flux.just(100.0, 50.0, 0.0, 30.0, 20.0)
-            .map(amount -> {
-                if (amount == 0.0) throw new ArithmeticException("División por cero");
-                if (amount < 25.0) throw new InsufficientFundsException("Saldo insuficiente: " + amount);
-                return amount;
-            });
-    }
-    
-    // Método adicional con manejo más granular de errores
-    private static void procesarTransaccionesConManejoGranular() {
-        Flux.just(100.0, 50.0, 0.0, 30.0, 20.0)
-            .index() // Añadir índice para tracking
-            .flatMap(tuple -> {
-                Long index = tuple.getT1();
-                Double amount = tuple.getT2();
-                
-                return Flux.just(amount)
-                    // Primero validar los errores de negocio
-                    .flatMap(amt -> {
-                        try {
-                            if (amt == 0.0) {
-                                log.warn("Error lógico en transacción #{}: División por cero. Usando valor por defecto 0.0", index);
-                                return Flux.just(0.0);
-                            }
-                            if (amt < 25.0) {
-                                log.warn("Fondos insuficientes en transacción #{}: {}. Transacción cancelada", index, amt);
-                                return Flux.empty(); // Omitir esta transacción
-                            }
-                            return Flux.just(amt);
-                        } catch (Exception e) {
-                            log.error("Error validando transacción #{}: {}", index, e.getMessage());
-                            return Flux.empty();
-                        }
-                    })
-                    
-                    // Procesar transacción (puede fallar por conexión)
-                    .map(validAmount -> {
-                        log.info("Transacción #{}: {} euros", index, validAmount);
-                        return TransactionProcessor.processTransaction(validAmount);
-                    })
-                    
-                    // Reintentos específicos para cada transacción
-                    .retryWhen(Retry.backoff(2, Duration.ofMillis(300))
-                        .filter(error -> error.getMessage().contains("Conexión intermitente"))
-                        .doBeforeRetry(retrySignal -> 
-                            log.warn("Reintentando transacción #{} (intento {})", 
-                                index, retrySignal.totalRetries() + 1)))
-                    
-                    // Manejo de errores de conexión irrecuperables
-                    .onErrorResume(error -> {
-                        if (error.getMessage().contains("Conexión")) {
-                            log.error("Error irrecuperable de conexión en transacción #{}: {}", 
-                                index, error.getMessage());
-                            return Flux.just(-1.0); // Valor de error
-                        }
-                        log.error("Error desconocido en transacción #{}: {}", 
-                            index, error.getMessage());
-                        return Flux.empty();
-                    })
-                    
-                    // Añadir información de tracking
-                    .map(result -> {
-                        if (result > 0) {
-                            log.info("✅ Transacción #{} exitosa: {} euros", index, result);
-                        } else if (result == 0.0) {
-                            log.info("⚠️ Transacción #{} procesada con valor por defecto: {} euros", index, result);
-                        } else {
-                            log.error("❌ Transacción #{} falló", index);
-                        }
-                        return result;
-                    });
-            })
-            .filter(result -> result >= 0) // Filtrar transacciones fallidas
-            .collectList() // Recopilar resultados
-            .doOnNext(results -> {
-                double total = results.stream().mapToDouble(Double::doubleValue).sum();
-                log.info("💰 Total procesado exitosamente: {} euros", total);
-                log.info("📊 Transacciones procesadas: {}", results.size());
-                log.info("📋 Detalles: {}", results);
-            })
-            .doOnError(error -> log.error("Error crítico en procesamiento granular: {}", error.getMessage()))
-            .onErrorResume(error -> {
-                log.error("Recuperándose de error crítico: {}", error.getMessage());
-                return Flux.<Double>empty().collectList();
-            })
-            .block();
-    }
 
 }
